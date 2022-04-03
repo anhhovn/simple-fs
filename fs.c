@@ -6,5 +6,5 @@
 typedef struct Superblock{
 	int total_blocks;
 	int root_index;
-	int 
+	int data_index;
 }_super_blk;
