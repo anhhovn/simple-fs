@@ -43,6 +43,8 @@ int fs_get_filesize(int fd);
 int fs_lseek(int fd, off_t offset);
 int fs_truncate(int fd, off_t length);
 
+char str[1000];
+
 //if your code compiles you pass test 0 for free
 //==============================================================================
 static int test0(void) {
@@ -58,15 +60,16 @@ static int test1(void) {
     rtn = make_fs("disk.1");
     if (rtn)
         return FAIL;
-
+    
     rtn = mount_fs("disk.1");
     if (rtn)
         return FAIL;
+    
 
     rtn = umount_fs("disk.1");
     if (rtn)
         return FAIL;
-
+    
     return PASS;
 }
 
@@ -155,20 +158,31 @@ static int test4(void) {
     fs_write(fd, wt, 10);
 
     rtn = fs_read(fd, rd, 10);
-    if (rtn != 0)
-        return FAIL;
+    if (rtn != 0){
+        strcat(str,"rtn!=0\n");
+        return FAIL;    
+    }
+        
 
     rtn = fs_lseek(fd, 0);
-    if (rtn)
-        return FAIL;
+    if (rtn){
+        strcat(str,"rtn = fs_Lseek\n");
+        return FAIL;       
+    }
+       
 
     rtn = fs_read(fd, rd, 10);
-    printf("read: %d\n", rtn);
-    if (rtn != 10)
-        return FAIL;
 
-    if (strcmp(wt, rd))
+    if (rtn != 10){
+        strcat(str,"rtn != 10\n");
+        return FAIL;        
+    }
+
+    if (strcmp(wt, rd)){
+        strcat(str,"wr != rd\n");
         return FAIL;
+    }
+
 
     fs_close(fd);
     umount_fs("disk.4");
@@ -601,7 +615,7 @@ int main(void){
             remove(disk);
         }
     }
-    
+    printf("%s\n",str);
     printf("total score was %i / %i\n", total_score, NUM_TESTS);
     return 0;
 }

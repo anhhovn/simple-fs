@@ -1,18 +1,19 @@
 #the compiler: gcc for C program
 CC = gcc
 
+
 # compiler flags:
 # -g	adds debugging information to the executable file
 # -Wall turns on most, but not all, compiler warnings
 CFLAGS = -g -Wall
-
+OBJFILES = fs.o disk.o test.o
 # the build target executable
-TARGET = disk
+TARGET = test
 
 all: $(TARGET)
 
-$(TARGET): $(TARGET).c
-	$(CC) $(CFLAGS) -c -o $(TARGET) $(TARGET).c
+$(TARGET): $(OBJFILES)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJFILES) 
 
 clean:
-	$(RM) $(TARGET)
+	rm -f $(OBJFILES) $(TARGET) *~
