@@ -14,7 +14,6 @@ super_block:
 This is the first block of the disk and it contains informataion about the location of the other
 data structures (FAT, root directory, and the start of the data blocks).
 
-num_blocks           - total of blocks on virtual disk
 ind_root_dir         - index of root directory
 ind_start_data_block - index of the first data block
 ind_FAT              - index of FAT
@@ -22,7 +21,6 @@ num_FAT_blocks       - total number of FAT blocks
 num_data_blocks      - total number of data blocks 
 */
 struct super_block{
-	int num_blocks;
 	int ind_root_dir;
 	int ind_start_data_block;
 	int ind_FAT;
@@ -85,25 +83,26 @@ struct super_block    *superblock;
 struct rootDirectory  *root_dir;
 struct FAT            *fat;
 struct fileDescriptor file_descriptors[FILE_OPEN_MAX];
-char str[1000];
+
 
 /*make_fs
-num_blocks           - total of blocks on virtual disk
 ind_root_dir         - index of root directory
 ind_start_data_block - index of the first data block
 ind_FAT              - index of FAT
 num_FAT_entries      - total number of FAT entries
 num_data_blocks      - total number of data blocks */ 
-int make_fs( char *disk_name){
+int make_fs(char *disk_name){
+	if(disk_name == NULL) return -1;
 	 //create and open new disk
 	 make_disk(disk_name);
 	 open_disk(disk_name);
-
+   
 	 //initialize and write meta-information for file system
 
 
 	 /*initialize superblock
-	 Each FAT entry holds an integer (4 bytes) which defines the index of the other entry.
+	  Each FAT entry holds an integer (4 bytes) which defines the index of the other entry.
+	  Each entry is 4-byte integer
     4096 data blocks (4096 numbers of integer) * 4 = 16384 bytes is the size of the FAT table
     16384 / BLOCK_SIZE = 4 blocks needed for FAT table
 
@@ -111,7 +110,6 @@ int make_fs( char *disk_name){
 
 	 superblock = malloc(BLOCK_SIZE);
 	 if(superblock == NULL) return -1;
-	 superblock -> num_blocks           = DISK_BLOCKS;
 	 superblock -> ind_FAT              = 1;
 	 superblock -> num_FAT_blocks       = 4;
 	 superblock -> ind_root_dir         = 5;
@@ -122,14 +120,17 @@ int make_fs( char *disk_name){
 	 block_write(0, (void*)superblock);
 	 free(superblock);
 	 close_disk();
+	 printf("//======make_fs======//\n");
 	 printf("make successfully\n");
+	 printf("\n");
     return 0;
  } 
 
 /*mount_fs*/
 int mount_fs(char *disk_name){
-	//if(disk_name == NULL) return -1;
-	open_disk(disk_name);
+	if(disk_name == NULL) return -1;
+	if(open_disk(disk_name) == -1) return -1;
+	
 	//read super block
 	superblock = malloc(BLOCK_SIZE);
 	block_read(0, (void*)superblock);
@@ -164,9 +165,8 @@ int mount_fs(char *disk_name){
 }
 
 int umount_fs(char *disk_name){
-	//if(disk_name == NULL) return -1;
+	 if(disk_name == NULL) return -1;
    
-   char buf[BLOCK_SIZE];
    /*write super block*/
    block_write(0,(void*)superblock);
    
@@ -181,7 +181,9 @@ int umount_fs(char *disk_name){
    for(int i = 0; i < FILE_OPEN_MAX; i++){
    	file_descriptors[i].isUsed = false;
    }
-	printf("umount_fs successfully\n");
+	printf("//======umount_fs======//\n");
+	printf("umount successfully\n");
+	printf("\n");
 	close_disk();
    return 0;
 }
@@ -236,6 +238,17 @@ int cur_fat_entry(int fat_index, int iteration){
 	return fat_index;
 }
 
+/*additional function helps to free fat entries*/
+int free_FAT_entries(int fat_index, int iteration){
+	for(int i = 0; i < iteration; i ++){
+		if(fat_index == END_OF_FILE){
+			return -1;
+		}
+		fat_index = fat[fat_index].ind_entry;
+		fat[fat_index].ind_entry = EMPTY;
+	}
+	return fat_index;
+}
 //file operations
 
 int fs_open(char *name){
@@ -330,8 +343,8 @@ int fs_delete(char *name){
 
 
 int fs_read(int fildes, void *buf, size_t nbyte){
-	if(fildes < 0 || fildes < FILE_OPEN_MAX || file_descriptors[fildes].isUsed == false || nbyte <= 0) return -1;
-	}
+	if(fildes < 0 || fildes > FILE_OPEN_MAX || file_descriptors[fildes].isUsed == false || nbyte <= 0) return -1;
+	
 
 	//get all the file information to prep for file write
   //file name and file index of the file the file descriptor is associated with
@@ -351,15 +364,15 @@ int fs_read(int fildes, void *buf, size_t nbyte){
 
   int nbytes_to_read = 0;
   if(offset + nbyte > dir->file_size){
-   	printf("s_read(): offset + nbytes is greater than file size");
+   	//printf("s_read(): offset + nbytes is greater than file size");
    	nbytes_to_read += abs(file_size - offset);
   }else{
   	nbytes_to_read = nbyte;
-  	printf("fs_read(): offset + nbytes is less than/equal to file size\n");
+  	//printf("fs_read(): offset + nbytes is less than/equal to file size\n");
   }
 
-  int fat_iteration = dir -> first_data_block;
-  int num_blocks = (nbytes_to_read / BLOCK_SIZE) + 1; // in case amount is 0, read the first block which is EOF
+  int cur_fat_index = dir -> first_data_block;
+  int num_blocks = (nbytes_to_read / BLOCK_SIZE) + 1;
 
    //get current data block and current location in that data block
   int cur_block    = offset / BLOCK_SIZE;
@@ -367,34 +380,39 @@ int fs_read(int fildes, void *buf, size_t nbyte){
   char buf_b[BLOCK_SIZE];
 
    //go to cur entry
-  fat_iteration = cur_fat_entry(fat_iteration, cur_block);
+  cur_fat_index = cur_fat_entry(cur_fat_index, cur_block);
 
    //read 
-  int shift = 0;
+  int available_nbytes = 0;
   int total_read = 0;
   for(int i = 0; i <num_blocks;i++){
    	if(cur_location + nbytes_to_read > BLOCK_SIZE){
-   		shift = BLOCK_SIZE - cur_location;
+   		available_nbytes = BLOCK_SIZE - cur_location;
    	}else{
-   		shift = nbytes_to_read;
+   		available_nbytes = nbytes_to_read;
     }
 
    	//read content from disk
-  	block_read(fat_iteration + superblock->ind_start_data_block, (void*) buf_b);
-  	memcpy(buf, buf_b + cur_location, shift);
+   	//read data block using fat entry index 
+   	//update the process with number of nbytes left to read
+    
+  
+  	block_read(cur_fat_index + superblock->ind_start_data_block, (void*) buf_b);
+  	memcpy(buf, buf_b + cur_location, available_nbytes);
 
       //update total of bytes read
-  		total_read += shift;
-  		buf += shift;
+  		total_read += available_nbytes;
+  		buf += available_nbytes;
   		cur_location = 0;
-      fat_iteration = fat[fat_iteration].ind_entry;
-      nbytes_to_read -= shift;
+      cur_fat_index = fat[cur_fat_index].ind_entry;
+      nbytes_to_read -= available_nbytes;
   }
 
   file_descriptors[file_index].offset += total_read;
   printf("//======fs_read()======//\n");
   printf("File name = %s\n", file_descriptors[fildes].fileName);
   printf("The number of read bytes: %d\n",total_read);
+  printf("\n");
 	return total_read;
 }
 
@@ -421,7 +439,7 @@ int fs_write(int fildes, void *buf, size_t nbyte){
 
   //Iterate through blocks
   char *write_buf = (char*)buf;
-  char bounce_buf[BLOCK_SIZE];
+  char buff_helper[BLOCK_SIZE];
   int amount_to_write = nbyte;
   int available_nbytes; //available unused space of the current block
   int total_byte_written = 0;
@@ -434,14 +452,14 @@ int fs_write(int fildes, void *buf, size_t nbyte){
 
   //locate and store indices of the free blocks
   //to avoid overwriting other file contents
-  printf("fs_write(): num_data_blocks = %d\n", superblock->num_data_blocks);
+  
   for(int i = 0; i < superblock->num_data_blocks; i ++){
-  	if(fat[i].ind_entry == 0){
+  	if(fat[i].ind_entry == EMPTY){
   		fat_block_indices[available_data_blocks] = i;
   		available_data_blocks ++;
-  		printf("fs_write(): fat_block_indices[%d] = %d\n",available_data_blocks - 1, i );
+  		//printf("fs_write(): fat_block_indices[%d] = %d\n",available_data_blocks - 1, i );
   	}else{
-  		printf("fs_write(): ind_entry=%d\n", fat[i].ind_entry);
+  		//printf("fs_write(): ind_entry=%d\n", fat[i].ind_entry);
   	}
   	if(available_data_blocks == cur_num_blocks_file){
   		break;
@@ -463,10 +481,10 @@ int fs_write(int fildes, void *buf, size_t nbyte){
   		available_nbytes = amount_to_write;
   	}
   	//continue to write at the current offset
-  	memcpy(bounce_buf + location, write_buf, available_nbytes);
-  	block_write(cur_fat_index + superblock->ind_start_data_block, (void*)bounce_buf);
+  	memcpy(buff_helper + location, write_buf, available_nbytes);
+  	block_write(cur_fat_index + superblock->ind_start_data_block, (void*)buff_helper);
 
-  	//update the process with total numer of bytes written
+  	//update the process with total number of bytes written
   	//move the pointer of write_buf to move on to the next nbytes which are not written yet
   
   	total_byte_written += available_nbytes;
@@ -474,7 +492,7 @@ int fs_write(int fildes, void *buf, size_t nbyte){
   	location = 0;
   	amount_to_write -= available_nbytes;
 
-  	// updating the final FAT entry values 
+  	// update FAT entry values 
 			if(i < cur_num_blocks_file - 1){
 				fat[cur_fat_index].ind_entry = fat_block_indices[i+1];
 				cur_fat_index = fat[cur_fat_index].ind_entry;
@@ -487,7 +505,7 @@ int fs_write(int fildes, void *buf, size_t nbyte){
 
   
 
-			// update filesize accordingly to how much was written 
+	//update the file size and the offset 
 	if(offset + total_byte_written > dir->file_size){
 			dir->file_size = offset + total_byte_written;
 	}
@@ -502,10 +520,15 @@ int fs_get_filesize(int fildes){
 	}
 
 	struct fileDescriptor *fd = &file_descriptors[fildes];
-   int index_file = find_file_index(fd->fileName);
-   if(index_file == -1) return -1;
-
-	return root_dir[index_file].file_size;
+	int index_file = find_file_index(fd->fileName);
+	struct rootDirectory *dir = &root_dir[index_file];
+  
+  if(index_file == -1) return -1;
+  int length = dir -> file_size;
+  printf("//======fs_get_filesize======//\n");
+  printf("%s has file size = %d\n",fd->fileName, length);
+  printf("\n");
+	return length;
 }
 
 int fs_lseek(int fildes, off_t offset){
@@ -519,59 +542,67 @@ int fs_lseek(int fildes, off_t offset){
 int fs_truncate(int fildes, off_t length){
 	if(file_descriptors[fildes].isUsed == false) return -1;
 	if(length < 0 || length > fs_get_filesize(fildes)) return -1;
-	/*
-	still in process, not completed
+	
+	//get file name and file index associated with the file descriptor
+	//get number of blocks which associated with the content of file
+	char *fileName = file_descriptors[fildes].fileName;
+  int file_index = find_file_index(fileName);
+   
 
-	*/
-	return -1;
+  struct rootDirectory *dir = &root_dir[file_index];
+  int total_blocks = (dir->file_size) / BLOCK_SIZE;
+  int cur_fat_index = dir -> first_data_block;
+	//printf("%s has file size = %d before being truncated\n", fileName, dir->file_size);  
+
+  //copy the content of file to a buffer
+  char* buffer = malloc(length);
+  
+  //read data of length "length" to buffer
+  fs_read(fildes,buffer,length);
+
+  //free all the FAT entries which associated with the content of file
+  // and set offset of file descriptor to 0
+  free_FAT_entries(cur_fat_index, total_blocks);
+  dir->first_data_block = END_OF_FILE;
+  dir->file_size = length;
+  file_descriptors[fildes].offset = 0;
+
+  printf("//======fs_truncate======//\n)");
+  printf("%s has file size = %d after being truncated\n", fileName, dir->file_size);
+  printf("\n");
+  //write the file
+  fs_write(fildes,buffer,length);
+  
+	return 0;
 }
 
 
      
 // int main(void){
 // 	 int rtn, fd;
-//     char wt[11];
-//     char rd[11];
+//     char buf[128];
 
-//     memset(wt, 0, 11);
-//     memset(rd, 0, 11);
-//     memset(wt, 'a', 10);
+//     memset(buf, 'a', 128);
 
-//     make_fs ("disk.4");
-//     mount_fs("disk.4");
+//     make_fs("disk.8");
+//     mount_fs("disk.8");
 
-//     fs_create("file.4");
-//     fd = fs_open("file.4");
+//     fs_create("file.8");
+//     fd = fs_open("file.8");
 
-//     int nbytes_written = fs_write(fd, wt, 10);
-//     printf(" nbytes written: %d\n",nbytes_written);
-//     rtn = fs_read(fd, rd, 10);
-//     if (rtn != 0){
-//         strcat(str,"rtn!=0\n");
-//         printf("FAIL fs_read() rtn !=0\n");  
-//     }
-        
+//     fs_write(fd, buf, 128);
+//     printf("fs_get_filesize = %d\n", fs_get_filesize(fd));
+//     fs_truncate(fd, 64);
+//     printf("fs_get_filesize = %d\n", fs_get_filesize(fd));
+//     rtn = fs_read(fd, buf, 32);
+//     if (rtn != 0)
+//         printf("rtn !=0 \n");
 
-//     rtn = fs_lseek(fd, 0);
-//     if (rtn){
-//         strcat(str,"rtn = fs_Lseek\n");
-//         printf("FAIL fs_lseek()\n");
-//     }
-       
-
-//     rtn = fs_read(fd, rd, 10);
-
-//     if (rtn != 10){
-//         strcat(str,"rtn != 10\n");
-//         printf("FAIL fs_read() rtn!=10 \n");
-//     }
-
-//     if (strcmp(wt, rd)){
-//         strcat(str,"wr != rd\n");
-//         printf("FAIL wr!=rd\n");
-//     }
-
+//     if (fs_get_filesize(fd) != 64)
+//     printf("fs_get_filesize != 64\n");
+//     printf("file size = %d\n", fs_get_filesize(fd));
+        	
 
 //     fs_close(fd);
-//     umount_fs("disk.4");
+//     umount_fs("disk.8");
 // }
